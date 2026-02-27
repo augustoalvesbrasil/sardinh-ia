@@ -1,0 +1,5 @@
+ID do cliente
+295000629972-4t2bgkfuoq6ospi3h8r3f831s5umu7hv.apps.googleusercontent.com
+
+Chave secreta do cliente
+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
