@@ -69,6 +69,51 @@ def executar_comando(cmd):
     result = subprocess.run(cmd, capture_output=True, text=False, check=False)
     return result.stdout.decode('utf-8', errors='replace')
 
+def gerar_relatorio_checkup():
+    print("\n📊 [GERANDO RELATÓRIO DE AUDITORIA]...")
+    caminho_db = os.path.join(GESTÃO_FOLDER, 'base_conhecimento_auvp.csv')
+    caminho_relatorio = os.path.join(GESTÃO_FOLDER, 'relatorio_checkup.txt')
+    
+    if not os.path.exists(caminho_db):
+        print("❌ CSV não encontrado. Não foi possível gerar o relatório.")
+        return
+
+    df = pd.read_csv(caminho_db, encoding='utf-8-sig')
+    col_categoria = 'Aba' if 'Aba' in df.columns else 'Tipo' if 'Tipo' in df.columns else None
+    
+    if not col_categoria:
+        print("❌ Coluna de categoria não encontrada no CSV.")
+        return
+
+    total_videos = len(df)
+    sucessos = len(df[df['Status'] == 'Sucesso'])
+    falhas = total_videos - sucessos
+    views_totais = df['Views'].sum() if 'Views' in df.columns else 0
+
+    stats = df.groupby(col_categoria).agg(
+        Total=('ID', 'count'),
+        Sucesso=('Status', lambda x: (x == 'Sucesso').sum())
+    )
+    stats['Cobertura %'] = (stats['Sucesso'] / stats['Total'] * 100).round(1)
+
+    with open(caminho_relatorio, 'w', encoding='utf-8') as f:
+        f.write("-" * 50 + "\n")
+        f.write("📊 RELATÓRIO DE COBERTURA - $ARDINH'IA\n")
+        f.write("-" * 50 + "\n")
+        f.write(f"Data da auditoria: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}\n\n")
+        f.write(f"Total de itens mapeados: {total_videos}\n")
+        f.write(f"Extrações concluídas:  {sucessos} ({(sucessos/total_videos)*100:.1f}%)\n")
+        f.write(f"Falhas/Sem legenda:    {falhas} ({(falhas/total_videos)*100:.1f}%)\n")
+        f.write("-" * 50 + "\n")
+        f.write("DETALHAMENTO POR CATEGORIA:\n")
+        f.write(stats.to_string() + "\n")
+        f.write("-" * 50 + "\n")
+        f.write(f"📈 ROI de Conhecimento: O motor já processou conteúdo\n")
+        f.write(f"que gerou mais de {views_totais:,.0f} visualizações no YouTube.\n")
+        f.write("-" * 50 + "\n")
+        
+    print(f"      ✅ Relatório TXT gerado com sucesso em: {caminho_relatorio}")
+
 # ==========================================
 # --- INTEGRAÇÃO DRIVE (COM AUTO-RESGATE) ---
 # ==========================================
@@ -93,7 +138,6 @@ def garantir_pasta_drive(service, nome, parent_id):
     return service.files().create(body=meta, fields='id').execute().get('id')
 
 def _enviar_texto_gdoc(service, nome_arquivo, texto, drive_folder_id):
-    """Motor de envio direto da memória para o Drive"""
     file_metadata = {
         'name': nome_arquivo,
         'parents': [drive_folder_id],
@@ -117,11 +161,9 @@ def _enviar_texto_gdoc(service, nome_arquivo, texto, drive_folder_id):
         print(f"      ❌ Erro Crítico ao subir {nome_arquivo}: {e}")
 
 def upload_txt_como_gdoc_seguro(service, filepath, drive_folder_id):
-    """Lê o arquivo, fatia se for muito gordo, e sobe seguro"""
     filename = os.path.basename(filepath)
     name_without_ext = os.path.splitext(filename)[0]
     
-    # Se o arquivo for maior que 400KB, o GDocs chora. Vamos fatiar.
     tamanho_mb = os.path.getsize(filepath) / (1024 * 1024)
     
     with open(filepath, 'r', encoding='utf-8-sig', errors='ignore') as f:
@@ -132,25 +174,22 @@ def upload_txt_como_gdoc_seguro(service, filepath, drive_folder_id):
         blocos = conteudo.split('======================================================================')
         
         texto_temp = ""
-        letra_parte = 65 # Ascii para 'A'
+        letra_parte = 65 
         
         for bloco in blocos:
             if not bloco.strip(): continue
             texto_temp += bloco + "\n" + "="*70 + "\n"
             
-            # Se a fatia atual bater 300 mil caracteres, enviamos a fatia
             if len(texto_temp) > 300000: 
                 sub_nome = f"{name_without_ext}_{chr(letra_parte)}"
                 _enviar_texto_gdoc(service, sub_nome, texto_temp, drive_folder_id)
                 letra_parte += 1
                 texto_temp = ""
                 
-        # Envia a sobra
         if texto_temp.strip():
             sub_nome = f"{name_without_ext}_{chr(letra_parte)}"
             _enviar_texto_gdoc(service, sub_nome, texto_temp, drive_folder_id)
     else:
-        # Se for magrinho, vai direto
         _enviar_texto_gdoc(service, name_without_ext, conteudo, drive_folder_id)
 
 def upload_arquivo_drive(service, filepath, drive_folder_id):
@@ -177,7 +216,7 @@ def sardinha_engine_v47_rescue():
     for d in [LOCAL_TXT_DIR, GESTÃO_FOLDER]:
         if not os.path.exists(d): os.makedirs(d)
 
-    # 1. MAPEAMENTO (Pula rápido se tudo já estiver no CSV)
+    # 1. MAPEAMENTO 
     all_videos = []
     ids_mapeados_globais = set()
     
@@ -240,7 +279,7 @@ def sardinha_engine_v47_rescue():
         v_link = f"https://www.youtube.com/watch?v={v_id}"
 
         if v_title in ['[Private video]', '[Deleted video]']: continue
-        if v_id in ids_ja_minerados: continue # Silenciei o print de pulo para ir rápido pro Drive
+        if v_id in ids_ja_minerados: continue 
 
         print(f"[{idx+1}/{total_liquido}] 🎬 Extraindo inédito: {v_title[:40]}...")
         try:
@@ -264,9 +303,19 @@ def sardinha_engine_v47_rescue():
                         f.write(f"\n{'='*70}\nTITULO: {v_title}\nABA: {video['aba']}\nDATA: {video['date']}\nLINK: {v_link}\n{'-'*70}\nCONTEÚDO:\n{texto}\n{'='*70}\n")
                     
                     palavras_atuais += num_palavras
-                    
                     ids_ja_minerados.add(v_id)
-                    nova_linha = {'ID': v_id, 'Data_Pub': video['date'], 'Link': v_link, 'Titulo': v_title, 'Aba': video['aba'], 'Views': video['views'], 'Local': nome_arquivo_base, 'Status': 'Sucesso'}
+                    
+                    nova_linha = {
+                        'ID': v_id, 
+                        'Data_Pub': video['date'], 
+                        'Link': v_link, 
+                        'Titulo': v_title, 
+                        'Aba': video['aba'], 
+                        'Views': video['views'], 
+                        'Local': nome_arquivo_base, 
+                        'Status': 'Sucesso',
+                        'Data_Extracao': datetime.now().strftime("%Y-%m-%d")
+                    }
                     df_db = pd.concat([df_db, pd.DataFrame([nova_linha])], ignore_index=True)
                     df_db.to_csv(DB_FILE, index=False, encoding='utf-8-sig')
                     print(f"      ✅ OK!")
@@ -291,6 +340,11 @@ def sardinha_engine_v47_rescue():
         upload_arquivo_drive(service, DB_FILE, FOLDER_SHEETS_DRIVE)
 
         print("\n🏆 MISSÃO CUMPRIDA! Os arquivos foram fatiados e salvos com sucesso no Drive.")
+        
+        # Gera o relatório no final de tudo
+        gerar_relatorio_checkup()
+        print("\n🚀 PROCESSO DO $ARDINH'IA FINALIZADO COM SUCESSO!")
+
     except Exception as e:
         print(f"❌ Erro crítico no ambiente de nuvem: {e}")
 
