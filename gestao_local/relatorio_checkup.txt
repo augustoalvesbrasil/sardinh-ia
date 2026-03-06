@@ -1,0 +1,50 @@
+--------------------------------------------------
+📊 RELATÓRIO DE COBERTURA - $ARDINH'IA
+--------------------------------------------------
+Data da auditoria: 05/03/2026 18:10:34
+
+Total de itens mapeados: 3063
+Extrações concluídas:  2942 (96.0%)
+Falhas/Sem legenda:    121 (4.0%)
+--------------------------------------------------
+DETALHAMENTO POR CATEGORIA:
+                                               Total  Sucesso  Cobertura %
+Aba                                                                       
+Ao_Vivo                                           31       27         87.1
+Cursos                                             1        0          0.0
+Playlist: #MeExplica                              75       74         98.7
+Playlist: A Saga de Jos�                          13       13        100.0
+Playlist: Bolsa de Valores                        76       75         98.7
+Playlist: Burrices da Classe M�dia                37       37        100.0
+Playlist: Como analisar uma a��o?                 65       65        100.0
+Playlist: Como investir em dividendos?            14       14        100.0
+Playlist: Como investir no exterior?              18       18        100.0
+Playlist: Como organizar sua vida financeira!     12       12        100.0
+Playlist: Comparando a��es!                        5        5        100.0
+Playlist: Criptomoedas                            58       58        100.0
+Playlist: Do zero AUVP                             4        4        100.0
+Playlist: Educa��o financeira                     75       75        100.0
+Playlist: Empreendedorismo                        22       21         95.5
+Playlist: Erros financeiros da CLASSE M�DIA        7        7        100.0
+Playlist: Especial de Natal 2021                   5        5        100.0
+Playlist: Especial de Natal 2022                   4        4        100.0
+Playlist: Especial de Natal 2023                   4        4        100.0
+Playlist: Especial de Natal 2024                   2        2        100.0
+Playlist: Especial de Natal 2025                   1        1        100.0
+Playlist: Fique rico sem depender da sorte        10       10        100.0
+Playlist: Fundos Imobiliarios                     45       45        100.0
+Playlist: Giro da Bolsa                          325      321         98.8
+Playlist: Lucros L�quidos - Podcast Semanal       18       17         94.4
+Playlist: Macroeconomia                          241      239         99.2
+Playlist: Na Reta - Minha carteira p�blica        41       12         29.3
+Playlist: O Trisal                                 2        2        100.0
+Playlist: O que eu acho                          348      327         94.0
+Playlist: Para assistir na televis�o              45       45        100.0
+Playlist: Renda Fixa                              45       45        100.0
+Podcasts                                           4        0          0.0
+Shorts                                           918      877         95.5
+Videos                                           479      468         97.7
+--------------------------------------------------
+📈 ROI de Conhecimento: O motor já processou conteúdo
+que gerou mais de 289,109,327 visualizações no YouTube.
+--------------------------------------------------
