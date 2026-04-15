@@ -101,7 +101,7 @@ def gerar_relatorio_checkup():
 
     with open(caminho_relatorio, 'w', encoding='utf-8') as f:
         f.write("-" * 50 + "\n")
-        f.write("📊 RELATÓRIO DE COBERTURA - $ARDINH'IA\n")
+        f.write("📊 RELATÓRIO DE COBERTURA - SardinhIA\n")
         f.write("-" * 50 + "\n")
         f.write(f"Data da auditoria: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}\n\n")
         f.write(f"Total de itens mapeados: {total_videos}\n")
@@ -135,7 +135,7 @@ Você tem em mãos "A Única Verdade Possível" (AUVP) estruturada. Este reposit
 1. **Google NotebookLM (Recomendado):** Vá ao NotebookLM, crie um novo bloco de notas e importe os arquivos `.txt` que estão na pasta `Cerebro_Docs` no seu Google Drive. Ele se tornará seu oráculo pessoal.
 2. **ChatGPT / Claude (Uso Rápido):** Faça o upload manual de 2 ou 3 arquivos da pasta local `cerebro_txt` e utilize prompts como: *"Atuando como o Investidor Sardinha, com base nos documentos anexos, escreva um roteiro sobre..."*.
 
-*Ativo gerado e mantido automaticamente pelo Motor de Extração $ardinh'IA.*
+*Ativo gerado e mantido automaticamente pelo Motor de Extração SardinhIA.*
 """
     with open(caminho_readme, 'w', encoding='utf-8') as f:
         f.write(conteudo)
@@ -254,23 +254,11 @@ def sardinha_engine_v47_rescue(evento_pausa=None, evento_cancelar=None):
     for d in [LOCAL_TXT_DIR, GESTÃO_FOLDER]:
         if not os.path.exists(d): os.makedirs(d)
 
-    # 1. PRÉ-FLIGHT: AUTENTICAÇÃO E ESTRUTURA DRIVE
-    print("🔐 [CONECTANDO AO GOOGLE DRIVE]...")
-    try:
-        service = get_drive_service()
-        
-        # Busca ou cria a pasta raiz dinâmica no Drive do usuário
-        root_folder_id = garantir_pasta_drive(service, DRIVE_ROOT_FOLDER_NAME)
-        # Garante as subpastas necessárias antes de qualquer outra coisa
-        id_docs = garantir_pasta_drive(service, "Cerebro_Docs", root_folder_id)
-        # ID para metadados (CSV, README, etc) - Vamos usar uma subpasta dedicada ou a própria raiz
-        id_metadata = garantir_pasta_drive(service, "Gestao_Metadados", root_folder_id)
-        
-        print("      ✅ Conexão estabelecida e pastas Drive verificadas/criadas!\n")
-    except Exception as e:
-        print(f"      ❌ Falha na conexão inicial com Drive: {e}")
-        print("      ⚠️ O motor continuará a extração local, mas o upload pode falhar no final.")
-        service = None
+    # Drive será conectado apenas no final, após toda extração local
+    service = None
+    root_folder_id = None
+    id_docs = None
+    id_metadata = None
 
     # 2. MAPEAMENTO 
     all_videos = []
@@ -412,14 +400,14 @@ def sardinha_engine_v47_rescue(evento_pausa=None, evento_cancelar=None):
         except Exception as e:
             print(f"      ❌ Erro: {e}")
 
-    # 4. CONVERSÃO INTELIGENTE (UPLOAD E FINALIZAÇÃO SEJA LÁ O MOTIVO)
+    # 4. UPLOAD PARA O DRIVE (só depois da extração local completa)
     try:
-        if not service:
-            print("\n☁️ Tentando reconectar ao Drive para upload...")
-            service = get_drive_service()
-            root_folder_id = garantir_pasta_drive(service, DRIVE_ROOT_FOLDER_NAME)
-            id_docs = garantir_pasta_drive(service, "Cerebro_Docs", root_folder_id)
-            id_metadata = garantir_pasta_drive(service, "Gestao_Metadados", root_folder_id)
+        print("\n🔐 [CONECTANDO AO GOOGLE DRIVE PARA UPLOAD]...")
+        service = get_drive_service()
+        root_folder_id = garantir_pasta_drive(service, DRIVE_ROOT_FOLDER_NAME)
+        id_docs = garantir_pasta_drive(service, "Cerebro_Docs", root_folder_id)
+        id_metadata = garantir_pasta_drive(service, "Gestao_Metadados", root_folder_id)
+        print("      ✅ Conexão estabelecida e pastas Drive verificadas!\n")
 
         print("\n☁️ [ENVIANDO DADOS PARA O GOOGLE DOCS]...")
         for f in os.listdir(LOCAL_TXT_DIR):
@@ -445,10 +433,10 @@ def sardinha_engine_v47_rescue(evento_pausa=None, evento_cancelar=None):
             upload_arquivo_drive(service, caminho_relatorio, id_metadata)
 
         if evento_cancelar and evento_cancelar.is_set():
-            print("\n⚠️ PROCESSO DO $ARDINH'IA INTERROMPIDO (COM BACKUP SALVO NO DRIVE).")
+            print("\n⚠️ PROCESSO DO SardinhIA INTERROMPIDO (COM BACKUP SALVO NO DRIVE).")
         else:
             print("\n🏆 MISSÃO CUMPRIDA! Os arquivos foram salvos com sucesso no Drive.")
-            print("\n🚀 PROCESSO DO $ARDINH'IA FINALIZADO COM SUCESSO!")
+            print("\n🚀 PROCESSO DO SardinhIA FINALIZADO COM SUCESSO!")
 
     except Exception as e:
         print(f"❌ Erro crítico no ambiente de nuvem: {e}")

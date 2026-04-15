@@ -1,7 +1,12 @@
 # -*- mode: python ; coding: utf-8 -*-
 from PyInstaller.utils.hooks import collect_all
 
-datas = [('logo.png', '.'), ("'IA (5).png", '.')]
+datas = [
+    ('logo.png', '.'),
+    ('logo_AUVP.png', '.'),
+    ('sardinh-ia.ico', '.'),
+    ('motor_sardinha.py', '.'),
+]
 binaries = []
 hiddenimports = []
 tmp_ret = collect_all('customtkinter')
@@ -28,7 +33,7 @@ exe = EXE(
     a.scripts,
     [],
     exclude_binaries=True,
-    name='app_sardinha',
+    name='SardinhIA',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -39,6 +44,7 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+    icon='sardinh-ia.ico',
 )
 coll = COLLECT(
     exe,
@@ -47,5 +53,5 @@ coll = COLLECT(
     strip=False,
     upx=True,
     upx_exclude=[],
-    name='app_sardinha',
+    name='SardinhIA',
 )
