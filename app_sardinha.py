@@ -238,6 +238,72 @@ class SardinhaApp(ctk.CTk):
         self.log_viewer.append_text("[SISTEMA] SardinhIA conectado e pronto.\n")
         self.log_viewer.append_text("[SISTEMA] Acesse a aba 'Guia & FAQ' para instruções detalhadas.\n")
 
+        # Verifica acesso de modo silencioso após 500ms para a UI carregar primeiro
+        self.after(500, self._verificar_acesso)
+
+    def _verificar_acesso(self):
+        if motor_sardinha.is_authenticated():
+            self._marcar_conectado()
+        else:
+            self._set_status("Aguardando Login", C["cyan"], "Credenciais ausentes. Autentique no Google Drive e tente novamente.")
+
+    def _dummy_action(self):
+        pass
+
+    def _marcar_conectado(self):
+        self.btn_auth.configure(
+            state="normal", 
+            text="✅  DRIVE CONECTADO", 
+            fg_color=C["green"], 
+            text_color=C["bg"], 
+            hover_color=C["green"],
+            command=self._dummy_action
+        )
+        self.btn_start.configure(state="normal")
+        self._set_status("Pronto", C["green"], "Conexão com Drive estabelecida. Pronto para ligar Motor.")
+        self.log_viewer.append_text("\n✅ [SISTEMA] Autenticação concluída! O token de acesso foi gerado e validado.\n")
+        self.log_viewer.append_text("▶️  [SISTEMA] Próximo passo: Clique em '⚡ LIGAR MOTOR' na barra lateral.\n")
+
+    def autenticar_drive(self):
+        self.btn_auth.configure(state="disabled", text="⏳ CONECTANDO...")
+        # Mostra o botão de cancelar no topo
+        self.btn_auth_cancel.place(relx=0.98, rely=0.15, anchor="ne") 
+        self._set_status("Autenticando...", C["cyan"],
+                         "Siga as instruções no navegador para autorizar o acesso.")
+
+        self._auth_stop = threading.Event()
+
+        def run_auth():
+            try:
+                motor_sardinha.get_drive_service(stop_event=self._auth_stop)
+                if self._auth_stop.is_set():
+                    return
+                # Se deu certo, esconde o botão
+                self.after(0, self.btn_auth_cancel.place_forget)
+                self.after(0, self._marcar_conectado)
+            except Exception as e:
+                self.after(0, self._resetar_auth,
+                           "Erro de Login", f"Falha na Autenticação: {e}")
+
+        t = threading.Thread(target=run_auth, daemon=True)
+        t.start()
+
+    def cancelar_auth(self):
+        """Chamado quando o usuário clica em Cancelar Login."""
+        if hasattr(self, '_auth_stop'):
+            self._auth_stop.set()
+        self._resetar_auth(
+            "Login Cancelado",
+            "Autenticação cancelada. Clique em Autenticar quando estiver pronto.")
+
+    def _resetar_auth(self, titulo, mensagem):
+        """Redefine a UI após qualquer falha/cancelamento do login."""
+        self.btn_auth.configure(state="normal", text="🔐  AUTENTICAR DRIVE")
+        self.btn_auth_cancel.place_forget() # Esconde o botão
+        self._set_status(titulo, C["red"], mensagem)
+        self.log_viewer.after(0, self.log_viewer.append_text,
+                              f"\n❌ {mensagem}\n")
+
     # ==========================================
     # --- BUILD SIDEBAR ---
     # ==========================================
@@ -276,14 +342,24 @@ class SardinhaApp(ctk.CTk):
         ctk.CTkFrame(sb, height=1, fg_color=C["border"]).grid(row=6, column=0, sticky="ew", padx=18, pady=(0, 18))
 
         # Botões
+        self.btn_auth = ctk.CTkButton(
+            sb, text="🔐  AUTENTICAR DRIVE",
+            font=ctk.CTkFont(size=13, weight="bold"),
+            fg_color=C["cyan"], text_color=C["bg"], hover_color="#0891b2",
+            height=46, corner_radius=10,
+            command=self.autenticar_drive
+        )
+        self.btn_auth.grid(row=7, column=0, padx=18, pady=(0, 10), sticky="ew")
+
         self.btn_start = ctk.CTkButton(
             sb, text="⚡  LIGAR MOTOR",
             font=ctk.CTkFont(size=13, weight="bold"),
             fg_color=C["blue"], hover_color=C["blue_dk"],
             height=46, corner_radius=10,
-            command=self.iniciar_extracao
+            command=self.iniciar_extracao,
+            state="disabled"
         )
-        self.btn_start.grid(row=7, column=0, padx=18, pady=(0, 10), sticky="ew")
+        self.btn_start.grid(row=8, column=0, padx=18, pady=(0, 10), sticky="ew")
 
         self.btn_pause = ctk.CTkButton(
             sb, text="⏸  PAUSAR",
@@ -292,7 +368,7 @@ class SardinhaApp(ctk.CTk):
             height=40, corner_radius=10,
             command=self.pausar_extracao, state="disabled"
         )
-        self.btn_pause.grid(row=8, column=0, padx=18, pady=(0, 8), sticky="ew")
+        self.btn_pause.grid(row=9, column=0, padx=18, pady=(0, 8), sticky="ew")
 
         self.btn_cancel = ctk.CTkButton(
             sb, text="⏹  CANCELAR",
@@ -301,14 +377,14 @@ class SardinhaApp(ctk.CTk):
             height=40, corner_radius=10,
             command=self.cancelar_extracao, state="disabled"
         )
-        self.btn_cancel.grid(row=9, column=0, padx=18, pady=(0, 0), sticky="ew")
+        self.btn_cancel.grid(row=10, column=0, padx=18, pady=(0, 0), sticky="ew")
 
         # Spacer + versão
-        sb.grid_rowconfigure(10, weight=1)
+        sb.grid_rowconfigure(11, weight=1)
         ctk.CTkLabel(
             sb, text="SardinhIA  v1.0",
             font=ctk.CTkFont(size=10), text_color=C["txt3"]
-        ).grid(row=11, column=0, pady=(0, 14))
+        ).grid(row=12, column=0, pady=(0, 14))
 
     # ==========================================
     # --- BUILD MAIN ---
@@ -336,6 +412,18 @@ class SardinhaApp(ctk.CTk):
             text_color=C["txt"]
         )
         self._status_title.pack(side="left")
+
+        # Botão de Cancelar Login (Fitts Law — Top Right)
+        self.btn_auth_cancel = ctk.CTkButton(
+            sc, text="✕  CANCELAR AUTENTICAÇÃO",
+            font=ctk.CTkFont(size=11, weight="bold"),
+            fg_color="transparent", border_width=1, border_color="#7F1D1D",
+            hover_color="#450A0A", text_color="#F87171",
+            height=28, corner_radius=8,
+            command=self.cancelar_auth
+        )
+        # Começa escondido
+        self.btn_auth_cancel.place_forget()
 
         self._status_desc = ctk.CTkLabel(
             sc, text="Pronto para iniciar. Leia o Guia & FAQ antes de ligar o motor.",

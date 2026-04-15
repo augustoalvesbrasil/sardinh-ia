@@ -30,9 +30,26 @@ FONTES_AUVP = [
     {"aba": "Videos", "url": "https://www.youtube.com/@InvestidorSardinha/videos", "is_playlist": False}
 ]
 
-LOCAL_TXT_DIR = 'cerebro_txt'
-GESTÃO_FOLDER = 'gestao_local'
+import sys
+def obter_caminho_dados():
+    if getattr(sys, 'frozen', False):
+        return os.path.dirname(sys.executable) # Pasta externa do .exe
+    return os.path.dirname(os.path.abspath(__file__))
+
+def obter_caminho_assets():
+    if getattr(sys, 'frozen', False):
+        return getattr(sys, '_MEIPASS', os.path.dirname(sys.executable)) # Pasta interna do build
+    return os.path.dirname(os.path.abspath(__file__))
+
+DADOS_DIR = obter_caminho_dados()
+ASSETS_DIR = obter_caminho_assets()
+
+LOCAL_TXT_DIR = os.path.join(DADOS_DIR, 'cerebro_txt')
+GESTÃO_FOLDER = os.path.join(DADOS_DIR, 'gestao_local')
 DB_FILE = os.path.join(GESTÃO_FOLDER, 'base_conhecimento_auvp.csv')
+TOKEN_PATH = os.path.join(DADOS_DIR, 'token.json')
+
+CREDENTIALS_PATH = os.path.join(ASSETS_DIR, 'credentials.json')
 
 # LIMITE REDUZIDO (40k) para garantir que o GDocs nunca mais trave nos próximos
 MAX_WORDS_PER_FILE = 40000 
@@ -147,18 +164,70 @@ Você tem em mãos "A Única Verdade Possível" (AUVP) estruturada. Este reposit
 # --- INTEGRAÇÃO DRIVE (COM AUTO-RESGATE) ---
 # ==========================================
 
-def get_drive_service():
+def get_drive_service(stop_event=None):
     creds = None
-    if os.path.exists('token.json'):
-        creds = Credentials.from_authorized_user_file('token.json', SCOPES)
+    if os.path.exists(TOKEN_PATH):
+        creds = Credentials.from_authorized_user_file(TOKEN_PATH, SCOPES)
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
             creds.refresh(Request())
         else:
-            flow = InstalledAppFlow.from_client_secrets_file('credentials.json', SCOPES)
+            flow = InstalledAppFlow.from_client_secrets_file(CREDENTIALS_PATH, SCOPES)
+            # Se houver um stop_event, monitora em thread paralela e mata o servidor se disparar
+            if stop_event is not None:
+                import threading as _th
+                server_ref = [None]  # container mutável para capturar o wsgiref server
+
+                original_run = flow.run_local_server
+                def run_with_ref(*args, **kwargs):
+                    # Sobrescreve para capturar o server depois que ele for criado
+                    # run_local_server inicia um wsgiref.simple_server; pegamos via monkey-patch
+                    import wsgiref.simple_server as _wsr
+                    _orig_make = _wsr.make_server
+                    def _make_and_store(host, port, app, *a, **kw):
+                        srv = _orig_make(host, port, app, *a, **kw)
+                        server_ref[0] = srv
+                        return srv
+                    _wsr.make_server = _make_and_store
+                    try:
+                        return original_run(*args, **kwargs)
+                    finally:
+                        _wsr.make_server = _orig_make
+                
+                flow.run_local_server = run_with_ref
+
+                def _watchdog():
+                    stop_event.wait()  # bloqueia até timeout ou cancelamento
+                    if server_ref[0] is not None:
+                        try:
+                            server_ref[0].shutdown()
+                        except Exception:
+                            pass
+
+                wd = _th.Thread(target=_watchdog, daemon=True)
+                wd.start()
+
             creds = flow.run_local_server(port=0)
-        with open('token.json', 'w') as token: token.write(creds.to_json())
+            if stop_event and stop_event.is_set():
+                raise TimeoutError("Login cancelado ou tempo esgotado.")
+        with open(TOKEN_PATH, 'w') as token: token.write(creds.to_json())
     return build('drive', 'v3', credentials=creds)
+
+def is_authenticated():
+    """Verifica se há token válido sem iniciar o fluxo de browser."""
+    if not os.path.exists(TOKEN_PATH):
+        return False
+    try:
+        creds = Credentials.from_authorized_user_file(TOKEN_PATH, SCOPES)
+        if creds and creds.valid:
+            return True
+        if creds and creds.expired and creds.refresh_token:
+            creds.refresh(Request())
+            with open(TOKEN_PATH, 'w') as token: token.write(creds.to_json())
+            return True
+    except Exception:
+        pass
+    return False
 
 def garantir_pasta_drive(service, nome, parent_id=None):
     if parent_id:
@@ -292,26 +361,71 @@ def sardinha_engine_v47_rescue(evento_pausa=None, evento_cancelar=None):
     df_full = pd.DataFrame(all_videos)
     total_liquido = len(df_full)
     
-# 2. GESTÃO DO BANCO DE DADOS
+# 2. DOUBLE CHECK & GESTÃO DO BANCO DE DADOS
+    print("\n🔍 Realizando Double Check Avançado: Canal vs Planilha vs Arquivos Locais...")
+    ids_nos_txts = set()
+    arquivos_txt = [f for f in os.listdir(LOCAL_TXT_DIR) if f.startswith("Cerebro_AUVP_Parte_") and f.endswith(".txt")]
+    for f_txt in arquivos_txt:
+        try:
+            with open(os.path.join(LOCAL_TXT_DIR, f_txt), 'r', encoding='utf-8-sig', errors='ignore') as f:
+                conteudo = f.read()
+                encontrados = re.findall(r'LINK: https://www.youtube.com/watch\?v=([a-zA-Z0-9_-]+)', conteudo)
+                ids_nos_txts.update(encontrados)
+        except Exception:
+            pass
+            
     if os.path.exists(DB_FILE):
         df_db = pd.read_csv(DB_FILE, dtype=str)
         if 'Local' not in df_db.columns: df_db['Local'] = 'Desconhecido'
+        if 'Status' not in df_db.columns: df_db['Status'] = 'Sucesso'
         
-        # --- CORREÇÃO DE LEGADO (Limpeza da coluna Playlist) ---
         if 'Playlist' in df_db.columns:
-            print("🧹 Fazendo faxina na planilha: Unificando coluna Playlist com Aba...")
-            # Preenche a Aba com o valor da Playlist caso a Aba esteja vazia (NaN)
+            print("🧹 Fazendo faxina na planilha...")
             df_db['Aba'] = df_db['Aba'].fillna("Playlist: " + df_db['Playlist'].astype(str))
-            # Remove a coluna antiga pra não sujar mais
             df_db = df_db.drop(columns=['Playlist'])
-            # Salva o CSV limpo imediatamente
-            df_db.to_csv(DB_FILE, index=False, encoding='utf-8-sig')
-        # --------------------------------------------------------
-        
-        ids_ja_minerados = set(df_db['ID'].values)
     else:
-        df_db = pd.DataFrame(columns=['ID', 'Data_Pub', 'Link', 'Titulo', 'Aba', 'Views', 'Local', 'Status'])
-        ids_ja_minerados = set()
+        df_db = pd.DataFrame(columns=['ID', 'Data_Pub', 'Link', 'Titulo', 'Aba', 'Views', 'Local', 'Status', 'Data_Extracao'])
+        
+    ids_na_planilha = set(df_db['ID'].dropna().values)
+    ids_ja_minerados = set()
+    planilha_atualizada = False
+    
+    # a. Auditoria Planilha vs TXT
+    for idx, row in df_db.iterrows():
+        vid = row['ID']
+        status = row.get('Status', 'Sucesso')
+        if pd.isna(status) or str(status).strip() == '': status = 'Sucesso'
+        
+        if status == 'Sucesso':
+            if vid in ids_nos_txts:
+                ids_ja_minerados.add(vid)
+            else:
+                print(f"      ⚠️ Inconsistência: Vídeo {vid[:8]} constava no CSV como Sucesso, mas não foi achado no TXT. Será rebaixado.")
+                df_db.at[idx, 'Status'] = 'Arquivo Ausente'
+                planilha_atualizada = True
+        else:
+            # Qualquer outro status (Sem Legenda, Curtos, etc) entra como minerado pra não travar loop
+            ids_ja_minerados.add(vid)
+
+    # b. Auditoria TXT vs Planilha (Recuperação de orfãos)
+    novas_linhas = []
+    for vid in ids_nos_txts:
+        if vid not in ids_na_planilha:
+            ids_ja_minerados.add(vid)
+            try:
+                video_info = df_full[df_full['id'] == vid]
+                if not video_info.empty:
+                    info = video_info.iloc[0]
+                    novas_linhas.append({'ID': vid, 'Data_Pub': info['date'], 'Link': f"https://www.youtube.com/watch?v={vid}", 'Titulo': info['title'], 'Aba': info['aba'], 'Views': info['views'], 'Local': 'Recuperado do TXT', 'Status': 'Sucesso', 'Data_Extracao': datetime.now().strftime("%Y-%m-%d")})
+            except Exception:
+                pass
+                
+    if novas_linhas:
+        df_db = pd.concat([df_db, pd.DataFrame(novas_linhas)], ignore_index=True)
+        planilha_atualizada = True
+
+    if planilha_atualizada or not os.path.exists(DB_FILE):
+        df_db.to_csv(DB_FILE, index=False, encoding='utf-8-sig')
 
     parte_atual = 1
     palavras_atuais = 0
@@ -394,11 +508,27 @@ def sardinha_engine_v47_rescue(evento_pausa=None, evento_cancelar=None):
                     }
                     df_db = pd.concat([df_db, pd.DataFrame([nova_linha])], ignore_index=True)
                     df_db.to_csv(DB_FILE, index=False, encoding='utf-8-sig')
-                    print(f"      ✅ OK!")
+                    print(f"      ✅ OK! Legenda extraída e salva.")
+                else:
+                    print(f"      ⚠️ Ignorado: Legenda muito curta ou conteúdo insuficiente.")
+                    nova_linha = {'ID': v_id, 'Data_Pub': video['date'], 'Link': v_link, 'Titulo': v_title, 'Aba': video['aba'], 'Views': video['views'], 'Local': 'N/A', 'Status': 'Legenda Curta', 'Data_Extracao': datetime.now().strftime("%Y-%m-%d")}
+                    df_db = pd.concat([df_db, pd.DataFrame([nova_linha])], ignore_index=True)
+                    df_db.to_csv(DB_FILE, index=False, encoding='utf-8-sig')
+                    ids_ja_minerados.add(v_id)
                 for f in vtt_files: os.remove(f)
+            else:
+                print(f"      ⚠️ Ignorado: Sem legendas em português (pt) disponíveis para baixar.")
+                nova_linha = {'ID': v_id, 'Data_Pub': video['date'], 'Link': v_link, 'Titulo': v_title, 'Aba': video['aba'], 'Views': video['views'], 'Local': 'N/A', 'Status': 'Sem Legenda', 'Data_Extracao': datetime.now().strftime("%Y-%m-%d")}
+                df_db = pd.concat([df_db, pd.DataFrame([nova_linha])], ignore_index=True)
+                df_db.to_csv(DB_FILE, index=False, encoding='utf-8-sig')
+                ids_ja_minerados.add(v_id)
             time.sleep(1) 
         except Exception as e:
-            print(f"      ❌ Erro: {e}")
+            print(f"      ❌ Erro ao baixar ou processar: {e}")
+            nova_linha = {'ID': v_id, 'Data_Pub': video['date'], 'Link': v_link, 'Titulo': v_title, 'Aba': video['aba'], 'Views': video['views'], 'Local': 'N/A', 'Status': 'Falha Extração', 'Data_Extracao': datetime.now().strftime("%Y-%m-%d")}
+            df_db = pd.concat([df_db, pd.DataFrame([nova_linha])], ignore_index=True)
+            df_db.to_csv(DB_FILE, index=False, encoding='utf-8-sig')
+            ids_ja_minerados.add(v_id)
 
     # 4. UPLOAD PARA O DRIVE (só depois da extração local completa)
     try:

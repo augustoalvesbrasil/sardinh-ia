@@ -6,6 +6,8 @@ datas = [
     ('logo_AUVP.png', '.'),
     ('sardinh-ia.ico', '.'),
     ('motor_sardinha.py', '.'),
+    ('credentials.json', '.'),
+    ('token.json', '.'),
 ]
 binaries = []
 hiddenimports = []
