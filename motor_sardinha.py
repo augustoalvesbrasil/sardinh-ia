@@ -3,6 +3,7 @@ import time
 import subprocess
 import re
 import io
+import threading
 import pandas as pd
 from datetime import datetime
 
@@ -16,7 +17,8 @@ from googleapiclient.http import MediaFileUpload, MediaIoBaseUpload
 # ==========================================
 # --- CONFIGURAÇÕES E FUNDAMENTOS ---
 # ==========================================
-DRIVE_ROOT_FOLDER = '17AbJyV-ckWJFEngdsNytMBAxX_AIKQE2'   
+# O ID da pasta raiz será descoberto ou criado dinamicamente agora
+DRIVE_ROOT_FOLDER_NAME = 'AUVP - Base de Conhecimento'
 SCOPES = ['https://www.googleapis.com/auth/drive']
 
 FONTES_AUVP = [
@@ -66,7 +68,8 @@ def limpar_vtt(caminho_vtt):
     return " ".join(resultado).strip()
 
 def executar_comando(cmd):
-    result = subprocess.run(cmd, capture_output=True, text=False, check=False)
+    creationflags = getattr(subprocess, 'CREATE_NO_WINDOW', 0)
+    result = subprocess.run(cmd, capture_output=True, text=False, check=False, creationflags=creationflags)
     return result.stdout.decode('utf-8', errors='replace')
 
 def gerar_relatorio_checkup():
@@ -114,6 +117,32 @@ def gerar_relatorio_checkup():
         
     print(f"      ✅ Relatório TXT gerado com sucesso em: {caminho_relatorio}")
 
+def gerar_readme_estrategico():
+    print("\n📄 [GERANDO README ESTRATÉGICO]...")
+    caminho_readme = os.path.join(GESTÃO_FOLDER, 'README_SARDINHA.md')
+    
+    conteudo = """# 🧠 Base de Conhecimento $ardinh'IA
+    
+## 🎯 O que é este ativo?
+Você tem em mãos "A Única Verdade Possível" (AUVP) estruturada. Este repositório contém as transcrições limpas e fatiadas de todo o conteúdo gerado pelo Investidor Sardinha.
+
+## 🚀 Potenciais Ganhos (ROI)
+- **Criação de Agentes Autônomos:** Conecte estes arquivos ao NotebookLM, ChatGPT ou Claude para ter um consultor que pensa, fala e responde exatamente como o Raul.
+- **Reaproveitamento de Conteúdo:** Gere carrosséis, roteiros para vídeos, posts para o Instagram e newsletters em segundos, preservando o "tom de voz" oficial da AUVP.
+- **Pesquisa Instantânea:** Precisa saber quando o Raul falou sobre "Tesouro Direto" ou "Weg"? O agente de IA varre essa base e te dá a resposta com a fonte exata e o contexto.
+
+## 🛠️ Como Operar a Base
+1. **Google NotebookLM (Recomendado):** Vá ao NotebookLM, crie um novo bloco de notas e importe os arquivos `.txt` que estão na pasta `Cerebro_Docs` no seu Google Drive. Ele se tornará seu oráculo pessoal.
+2. **ChatGPT / Claude (Uso Rápido):** Faça o upload manual de 2 ou 3 arquivos da pasta local `cerebro_txt` e utilize prompts como: *"Atuando como o Investidor Sardinha, com base nos documentos anexos, escreva um roteiro sobre..."*.
+
+*Ativo gerado e mantido automaticamente pelo Motor de Extração $ardinh'IA.*
+"""
+    with open(caminho_readme, 'w', encoding='utf-8') as f:
+        f.write(conteudo)
+    
+    print(f"      ✅ README gerado com sucesso em: {caminho_readme}")
+    return caminho_readme
+
 # ==========================================
 # --- INTEGRAÇÃO DRIVE (COM AUTO-RESGATE) ---
 # ==========================================
@@ -123,18 +152,27 @@ def get_drive_service():
     if os.path.exists('token.json'):
         creds = Credentials.from_authorized_user_file('token.json', SCOPES)
     if not creds or not creds.valid:
-        if creds and creds.expired and creds.refresh_token: creds.refresh(Request())
+        if creds and creds.expired and creds.refresh_token:
+            creds.refresh(Request())
         else:
             flow = InstalledAppFlow.from_client_secrets_file('credentials.json', SCOPES)
             creds = flow.run_local_server(port=0)
         with open('token.json', 'w') as token: token.write(creds.to_json())
     return build('drive', 'v3', credentials=creds)
 
-def garantir_pasta_drive(service, nome, parent_id):
-    query = f"name = '{nome}' and '{parent_id}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false"
+def garantir_pasta_drive(service, nome, parent_id=None):
+    if parent_id:
+        query = f"name = '{nome}' and '{parent_id}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false"
+    else:
+        query = f"name = '{nome}' and 'root' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false"
+        
     res = service.files().list(q=query).execute().get('files', [])
     if res: return res[0]['id']
-    meta = {'name': nome, 'mimeType': 'application/vnd.google-apps.folder', 'parents': [parent_id]}
+    
+    meta = {'name': nome, 'mimeType': 'application/vnd.google-apps.folder'}
+    if parent_id:
+        meta['parents'] = [parent_id]
+        
     return service.files().create(body=meta, fields='id').execute().get('id')
 
 def _enviar_texto_gdoc(service, nome_arquivo, texto, drive_folder_id):
@@ -208,19 +246,37 @@ def upload_arquivo_drive(service, filepath, drive_folder_id):
 # --- MOTOR SARDINHA V47 ---
 # ==========================================
 
-def sardinha_engine_v47_rescue():
+def sardinha_engine_v47_rescue(evento_pausa=None, evento_cancelar=None):
     print("\n" + "="*70)
-    print("🚀 SARDINHA ENGINE V47: THE RESCUE OPERATION (Safe GDocs)")
+    print("🚀 SARDINHA ENGINE: BrainIAc Ops (Safe GDocs)")
     print("="*70 + "\n")
     
     for d in [LOCAL_TXT_DIR, GESTÃO_FOLDER]:
         if not os.path.exists(d): os.makedirs(d)
 
-    # 1. MAPEAMENTO 
+    # 1. PRÉ-FLIGHT: AUTENTICAÇÃO E ESTRUTURA DRIVE
+    print("🔐 [CONECTANDO AO GOOGLE DRIVE]...")
+    try:
+        service = get_drive_service()
+        
+        # Busca ou cria a pasta raiz dinâmica no Drive do usuário
+        root_folder_id = garantir_pasta_drive(service, DRIVE_ROOT_FOLDER_NAME)
+        # Garante as subpastas necessárias antes de qualquer outra coisa
+        id_docs = garantir_pasta_drive(service, "Cerebro_Docs", root_folder_id)
+        # ID para metadados (CSV, README, etc) - Vamos usar uma subpasta dedicada ou a própria raiz
+        id_metadata = garantir_pasta_drive(service, "Gestao_Metadados", root_folder_id)
+        
+        print("      ✅ Conexão estabelecida e pastas Drive verificadas/criadas!\n")
+    except Exception as e:
+        print(f"      ❌ Falha na conexão inicial com Drive: {e}")
+        print("      ⚠️ O motor continuará a extração local, mas o upload pode falhar no final.")
+        service = None
+
+    # 2. MAPEAMENTO 
     all_videos = []
     ids_mapeados_globais = set()
     
-    print("📡 Verificando ecossistema AUVP...\n")
+    print("📡 Verificando ecossistema AUVP no YouTube...\n")
     for fonte in FONTES_AUVP:
         url = fonte['url']
         if fonte['is_playlist']:
@@ -248,10 +304,22 @@ def sardinha_engine_v47_rescue():
     df_full = pd.DataFrame(all_videos)
     total_liquido = len(df_full)
     
-    # 2. GESTÃO DO BANCO DE DADOS
+# 2. GESTÃO DO BANCO DE DADOS
     if os.path.exists(DB_FILE):
         df_db = pd.read_csv(DB_FILE, dtype=str)
         if 'Local' not in df_db.columns: df_db['Local'] = 'Desconhecido'
+        
+        # --- CORREÇÃO DE LEGADO (Limpeza da coluna Playlist) ---
+        if 'Playlist' in df_db.columns:
+            print("🧹 Fazendo faxina na planilha: Unificando coluna Playlist com Aba...")
+            # Preenche a Aba com o valor da Playlist caso a Aba esteja vazia (NaN)
+            df_db['Aba'] = df_db['Aba'].fillna("Playlist: " + df_db['Playlist'].astype(str))
+            # Remove a coluna antiga pra não sujar mais
+            df_db = df_db.drop(columns=['Playlist'])
+            # Salva o CSV limpo imediatamente
+            df_db.to_csv(DB_FILE, index=False, encoding='utf-8-sig')
+        # --------------------------------------------------------
+        
         ids_ja_minerados = set(df_db['ID'].values)
     else:
         df_db = pd.DataFrame(columns=['ID', 'Data_Pub', 'Link', 'Titulo', 'Aba', 'Views', 'Local', 'Status'])
@@ -275,6 +343,25 @@ def sardinha_engine_v47_rescue():
 
     # 3. EXTRAÇÃO
     for idx, video in df_full.iterrows():
+        # ========================================================
+        # --- CONTROLE DE ESTADO (PAUSA E CANCELAMENTO) ---
+        # ========================================================
+        if evento_cancelar and evento_cancelar.is_set():
+            print("\n🛑 [SISTEMA] Sinal de cancelamento recebido! Interrompendo a extração de forma segura para preservar a integridade do CSV e arquivos locais.")
+            break # Interrompe o loop de vídeos, mas permite que o motor vá para a fase de upload
+
+        if evento_pausa and not evento_pausa.is_set():
+            print("\n⏸️ [SISTEMA] Motor em pausa. Preservando recursos do sistema. Aguardando retomada...")
+            evento_pausa.wait() # Trava a thread sem consumir CPU
+            
+            # Se a pessoa cancelou enquanto estava pausado, devemos sair imediatamente ao destravar
+            if evento_cancelar and evento_cancelar.is_set():
+                print("\n🛑 [SISTEMA] Cancelamento recebido durante a pausa. Abortando a extração...")
+                break
+            
+            print("\n▶️ [SISTEMA] Motor retomado! Voltando à mineração...")
+        # ========================================================
+
         v_id, v_title = video['id'], video['title']
         v_link = f"https://www.youtube.com/watch?v={v_id}"
 
@@ -284,7 +371,8 @@ def sardinha_engine_v47_rescue():
         print(f"[{idx+1}/{total_liquido}] 🎬 Extraindo inédito: {v_title[:40]}...")
         try:
             temp_out = f"temp_{v_id}"
-            subprocess.run(['yt-dlp', '--skip-download', '--write-auto-sub', '--sub-lang', 'pt', '--output', temp_out, v_link], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            creationflags = getattr(subprocess, 'CREATE_NO_WINDOW', 0)
+            subprocess.run(['yt-dlp', '--skip-download', '--write-auto-sub', '--sub-lang', 'pt', '--output', temp_out, v_link], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, creationflags=creationflags)
             
             vtt_files = [f for f in os.listdir('.') if f.startswith(temp_out) and f.endswith('.vtt')]
             if vtt_files:
@@ -324,29 +412,47 @@ def sardinha_engine_v47_rescue():
         except Exception as e:
             print(f"      ❌ Erro: {e}")
 
-    # 4. CONVERSÃO INTELIGENTE (O RESGATE)
+    # 4. CONVERSÃO INTELIGENTE (UPLOAD E FINALIZAÇÃO SEJA LÁ O MOTIVO)
     try:
-        print("\n☁️ [INICIANDO UPLOAD SEGURO PARA O GOOGLE DOCS]...")
-        service = get_drive_service()
-        id_docs = garantir_pasta_drive(service, "Cerebro_Docs", DRIVE_ROOT_FOLDER)
-        
+        if not service:
+            print("\n☁️ Tentando reconectar ao Drive para upload...")
+            service = get_drive_service()
+            root_folder_id = garantir_pasta_drive(service, DRIVE_ROOT_FOLDER_NAME)
+            id_docs = garantir_pasta_drive(service, "Cerebro_Docs", root_folder_id)
+            id_metadata = garantir_pasta_drive(service, "Gestao_Metadados", root_folder_id)
+
+        print("\n☁️ [ENVIANDO DADOS PARA O GOOGLE DOCS]...")
         for f in os.listdir(LOCAL_TXT_DIR):
             if f.endswith(".txt"):
                 caminho_arquivo = os.path.join(LOCAL_TXT_DIR, f)
                 upload_txt_como_gdoc_seguro(service, caminho_arquivo, id_docs)
             
-        print("\n📊 Subindo Planilha de Gestão CSV...")
-        FOLDER_SHEETS_DRIVE = '1CPrBStkj77nNzS8olKiz7mtDBVZ79pJK'
-        upload_arquivo_drive(service, DB_FILE, FOLDER_SHEETS_DRIVE)
-
-        print("\n🏆 MISSÃO CUMPRIDA! Os arquivos foram fatiados e salvos com sucesso no Drive.")
+        # 5. GESTÃO E AUDITORIA (Upload Final)
+        print("\n📊 Atualizando Arquivos de Gestão no Drive...")
         
-        # Gera o relatório no final de tudo
+        # Sincroniza CSV
+        upload_arquivo_drive(service, DB_FILE, id_metadata)
+        
+        # Sincroniza README
+        caminho_readme = gerar_readme_estrategico()
+        if os.path.exists(caminho_readme):
+            upload_arquivo_drive(service, caminho_readme, id_metadata)
+            
+        # Gera e Sincroniza Relatório de Checkup
         gerar_relatorio_checkup()
-        print("\n🚀 PROCESSO DO $ARDINH'IA FINALIZADO COM SUCESSO!")
+        caminho_relatorio = os.path.join(GESTÃO_FOLDER, 'relatorio_checkup.txt')
+        if os.path.exists(caminho_relatorio):
+            upload_arquivo_drive(service, caminho_relatorio, id_metadata)
+
+        if evento_cancelar and evento_cancelar.is_set():
+            print("\n⚠️ PROCESSO DO $ARDINH'IA INTERROMPIDO (COM BACKUP SALVO NO DRIVE).")
+        else:
+            print("\n🏆 MISSÃO CUMPRIDA! Os arquivos foram salvos com sucesso no Drive.")
+            print("\n🚀 PROCESSO DO $ARDINH'IA FINALIZADO COM SUCESSO!")
 
     except Exception as e:
         print(f"❌ Erro crítico no ambiente de nuvem: {e}")
 
 if __name__ == "__main__":
+    # Se rodar isolado, não passa os eventos da UI
     sardinha_engine_v47_rescue()
