@@ -1,3 +1,4 @@
+import sys
 import os
 import time
 import subprocess
@@ -66,6 +67,31 @@ def limpar_vtt(caminho_vtt):
             if texto_limpo[i] != texto_limpo[i-1]:
                 resultado.append(texto_limpo[i])
     return " ".join(resultado).strip()
+
+def get_bundle_dir():
+    """Retorna o diretório base do bundle PyInstaller ou o diretório atual."""
+    if getattr(sys, 'frozen', False):
+        return getattr(sys, '_MEIPASS', os.path.abspath(os.path.dirname(sys.executable)))
+    return os.path.abspath(".")
+
+def get_ytdlp_command():
+    """Retorna o comando yt-dlp adequado (absoluto se congelado pelo PyInstaller)."""
+    if getattr(sys, 'frozen', False):
+        bundle_dir = get_bundle_dir()
+        ytdlp_exe = os.path.join(bundle_dir, "yt-dlp.exe")
+        if os.path.exists(ytdlp_exe):
+            return ytdlp_exe
+    return 'yt-dlp'
+
+def get_extra_ytdlp_args():
+    """Retorna argumentos extras para o yt-dlp, como localização do ffmpeg."""
+    args = []
+    if getattr(sys, 'frozen', False):
+        bundle_dir = get_bundle_dir()
+        ffmpeg_exe = os.path.join(bundle_dir, "ffmpeg.exe")
+        if os.path.exists(ffmpeg_exe):
+            args.extend(['--ffmpeg-location', bundle_dir])
+    return args
 
 def executar_comando(cmd):
     creationflags = getattr(subprocess, 'CREATE_NO_WINDOW', 0)
@@ -149,15 +175,32 @@ Você tem em mãos "A Única Verdade Possível" (AUVP) estruturada. Este reposit
 
 def get_drive_service():
     creds = None
+    # 1. Tenta carregar o token existente
     if os.path.exists('token.json'):
         creds = Credentials.from_authorized_user_file('token.json', SCOPES)
+    
+    # 2. Se não houver token ou for inválido, inicia fluxo de login
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
             creds.refresh(Request())
         else:
-            flow = InstalledAppFlow.from_client_secrets_file('credentials.json', SCOPES)
+            # Busca o credentials.json (local ou embutido no .exe)
+            path_cred = 'credentials.json'
+            if getattr(sys, 'frozen', False):
+                bundle_path = os.path.join(get_bundle_dir(), 'credentials.json')
+                if os.path.exists(bundle_path):
+                    path_cred = bundle_path
+            
+            if not os.path.exists(path_cred):
+                raise FileNotFoundError(f"Arquivo de configuração '{path_cred}' não encontrado.")
+                
+            flow = InstalledAppFlow.from_client_secrets_file(path_cred, SCOPES)
             creds = flow.run_local_server(port=0)
-        with open('token.json', 'w') as token: token.write(creds.to_json())
+            
+        # Salva o token para a próxima vez
+        with open('token.json', 'w') as token:
+            token.write(creds.to_json())
+            
     return build('drive', 'v3', credentials=creds)
 
 def garantir_pasta_drive(service, nome, parent_id=None):
@@ -254,11 +297,22 @@ def sardinha_engine_v47_rescue(evento_pausa=None, evento_cancelar=None):
     for d in [LOCAL_TXT_DIR, GESTÃO_FOLDER]:
         if not os.path.exists(d): os.makedirs(d)
 
-    # Drive será conectado apenas no final, após toda extração local
+    # 1. CONEXÃO DRIVE (PRÉ-REQUISITO)
     service = None
     root_folder_id = None
     id_docs = None
     id_metadata = None
+
+    try:
+        print("\n🔐 [VALIDANDO ACESSO AO GOOGLE DRIVE]...")
+        service = get_drive_service()
+        root_folder_id = garantir_pasta_drive(service, DRIVE_ROOT_FOLDER_NAME)
+        id_docs = garantir_pasta_drive(service, "Cerebro_Docs", root_folder_id)
+        id_metadata = garantir_pasta_drive(service, "Gestao_Metadados", root_folder_id)
+        print("      ✅ Conexão estabelecida e pastas Drive verificadas!\n")
+    except Exception as e:
+        print(f"❌ Erro crítico na conexão com o Drive: {e}")
+        return # Aborta se não conseguir conectar
 
     # 2. MAPEAMENTO 
     all_videos = []
@@ -268,12 +322,12 @@ def sardinha_engine_v47_rescue(evento_pausa=None, evento_cancelar=None):
     for fonte in FONTES_AUVP:
         url = fonte['url']
         if fonte['is_playlist']:
-            cmd_p = ['yt-dlp', '--flat-playlist', '--get-id', '--get-title', '--ignore-errors', url]
+            cmd_p = [get_ytdlp_command()] + get_extra_ytdlp_args() + ['--flat-playlist', '--get-id', '--get-title', '--ignore-errors', url]
             stdout_p = executar_comando(cmd_p)
             p_lines = [l.strip() for l in stdout_p.split('\n') if l.strip()]
             for i in range(0, len(p_lines), 2):
                 if i+1 < len(p_lines):
-                    cmd_v = ['yt-dlp', '--flat-playlist', '--ignore-errors', '--print', '%(id)s|||%(upload_date)s|||%(view_count)s|||%(title)s', f"https://www.youtube.com/playlist?list={p_lines[i+1]}"]
+                    cmd_v = [get_ytdlp_command()] + get_extra_ytdlp_args() + ['--flat-playlist', '--ignore-errors', '--print', '%(id)s|||%(upload_date)s|||%(view_count)s|||%(title)s', f"https://www.youtube.com/playlist?list={p_lines[i+1]}"]
                     stdout_v = executar_comando(cmd_v)
                     for line in stdout_v.split('\n'):
                         parts = line.split('|||')
@@ -281,7 +335,7 @@ def sardinha_engine_v47_rescue(evento_pausa=None, evento_cancelar=None):
                             all_videos.append({'id': parts[0], 'date': formatar_data(parts[1]), 'views': parts[2], 'title': parts[3], 'aba': f"Playlist: {p_lines[i]}"})
                             ids_mapeados_globais.add(parts[0])
         else:
-            cmd = ['yt-dlp', '--flat-playlist', '--ignore-errors', '--print', '%(id)s|||%(upload_date)s|||%(view_count)s|||%(title)s', url]
+            cmd = [get_ytdlp_command()] + get_extra_ytdlp_args() + ['--flat-playlist', '--ignore-errors', '--print', '%(id)s|||%(upload_date)s|||%(view_count)s|||%(title)s', url]
             stdout = executar_comando(cmd)
             for line in stdout.split('\n'):
                 parts = line.split('|||')
@@ -360,7 +414,8 @@ def sardinha_engine_v47_rescue(evento_pausa=None, evento_cancelar=None):
         try:
             temp_out = f"temp_{v_id}"
             creationflags = getattr(subprocess, 'CREATE_NO_WINDOW', 0)
-            subprocess.run(['yt-dlp', '--skip-download', '--write-auto-sub', '--sub-lang', 'pt', '--output', temp_out, v_link], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, creationflags=creationflags)
+            cmd_sub = [get_ytdlp_command()] + get_extra_ytdlp_args() + ['--skip-download', '--write-auto-sub', '--sub-lang', 'pt', '--output', temp_out, v_link]
+            subprocess.run(cmd_sub, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, creationflags=creationflags)
             
             vtt_files = [f for f in os.listdir('.') if f.startswith(temp_out) and f.endswith('.vtt')]
             if vtt_files:
@@ -400,14 +455,11 @@ def sardinha_engine_v47_rescue(evento_pausa=None, evento_cancelar=None):
         except Exception as e:
             print(f"      ❌ Erro: {e}")
 
-    # 4. UPLOAD PARA O DRIVE (só depois da extração local completa)
+    # 4. UPLOAD PARA O DRIVE (Uso do service já validado no início)
     try:
-        print("\n🔐 [CONECTANDO AO GOOGLE DRIVE PARA UPLOAD]...")
-        service = get_drive_service()
-        root_folder_id = garantir_pasta_drive(service, DRIVE_ROOT_FOLDER_NAME)
-        id_docs = garantir_pasta_drive(service, "Cerebro_Docs", root_folder_id)
-        id_metadata = garantir_pasta_drive(service, "Gestao_Metadados", root_folder_id)
-        print("      ✅ Conexão estabelecida e pastas Drive verificadas!\n")
+        if not service:
+            print("❌ Serviço Drive não disponível. Abortando upload.")
+            return
 
         print("\n☁️ [ENVIANDO DADOS PARA O GOOGLE DOCS]...")
         for f in os.listdir(LOCAL_TXT_DIR):

@@ -226,14 +226,17 @@ class SardinhaApp(ctk.CTk):
         self._n_arquivos = 0
 
         self.grid_rowconfigure(0, weight=1)
-        self.grid_columnconfigure(0, weight=0)
         self.grid_columnconfigure(1, weight=1)
+        
+        self.auth_em_curso = False
 
         self._build_sidebar()
         self._build_main()
 
         sys.stdout = SmartPrintRedirector(self.log_viewer)
         sys.stderr = sys.stdout
+
+        self.verificar_login()
 
         self.log_viewer.append_text("[SISTEMA] SardinhIA conectado e pronto.\n")
         self.log_viewer.append_text("[SISTEMA] Acesse a aba 'Guia & FAQ' para instruções detalhadas.\n")
@@ -276,6 +279,15 @@ class SardinhaApp(ctk.CTk):
         ctk.CTkFrame(sb, height=1, fg_color=C["border"]).grid(row=6, column=0, sticky="ew", padx=18, pady=(0, 18))
 
         # Botões
+        self.btn_auth = ctk.CTkButton(
+            sb, text="🔑  AUTENTICAR DRIVE",
+            font=ctk.CTkFont(size=13, weight="bold"),
+            fg_color=C["cyan"], hover_color="#0891B2",
+            height=46, corner_radius=10,
+            command=self.autenticar_drive
+        )
+        self.btn_auth.grid(row=7, column=0, padx=18, pady=(0, 10), sticky="ew")
+
         self.btn_start = ctk.CTkButton(
             sb, text="⚡  LIGAR MOTOR",
             font=ctk.CTkFont(size=13, weight="bold"),
@@ -283,7 +295,7 @@ class SardinhaApp(ctk.CTk):
             height=46, corner_radius=10,
             command=self.iniciar_extracao
         )
-        self.btn_start.grid(row=7, column=0, padx=18, pady=(0, 10), sticky="ew")
+        self.btn_start.grid(row=8, column=0, padx=18, pady=(0, 10), sticky="ew")
 
         self.btn_pause = ctk.CTkButton(
             sb, text="⏸  PAUSAR",
@@ -292,7 +304,7 @@ class SardinhaApp(ctk.CTk):
             height=40, corner_radius=10,
             command=self.pausar_extracao, state="disabled"
         )
-        self.btn_pause.grid(row=8, column=0, padx=18, pady=(0, 8), sticky="ew")
+        self.btn_pause.grid(row=9, column=0, padx=18, pady=(0, 8), sticky="ew")
 
         self.btn_cancel = ctk.CTkButton(
             sb, text="⏹  CANCELAR",
@@ -301,14 +313,14 @@ class SardinhaApp(ctk.CTk):
             height=40, corner_radius=10,
             command=self.cancelar_extracao, state="disabled"
         )
-        self.btn_cancel.grid(row=9, column=0, padx=18, pady=(0, 0), sticky="ew")
+        self.btn_cancel.grid(row=10, column=0, padx=18, pady=(0, 0), sticky="ew")
 
         # Spacer + versão
-        sb.grid_rowconfigure(10, weight=1)
+        sb.grid_rowconfigure(11, weight=1)
         ctk.CTkLabel(
             sb, text="SardinhIA  v1.0",
             font=ctk.CTkFont(size=10), text_color=C["txt3"]
-        ).grid(row=11, column=0, pady=(0, 14))
+        ).grid(row=12, column=0, pady=(0, 14))
 
     # ==========================================
     # --- BUILD MAIN ---
@@ -336,6 +348,16 @@ class SardinhaApp(ctk.CTk):
             text_color=C["txt"]
         )
         self._status_title.pack(side="left")
+
+        self.btn_cancel_auth = ctk.CTkButton(
+            header, text="CANCELAR",
+            font=ctk.CTkFont(size=10, weight="bold"),
+            fg_color="#7F1D1D", hover_color="#991B1B",
+            width=70, height=22, corner_radius=6,
+            command=self.cancelar_login
+        )
+        # Inicialmente escondido
+        self.btn_cancel_auth.pack_forget()
 
         self._status_desc = ctk.CTkLabel(
             sc, text="Pronto para iniciar. Leia o Guia & FAQ antes de ligar o motor.",
@@ -426,6 +448,52 @@ class SardinhaApp(ctk.CTk):
     def _inc_files(self):
         self._n_arquivos += 1
         self._card_files.set_value(self._n_arquivos)
+
+    # ==========================================
+    # --- AUTENTICAÇÃO ---
+    # ==========================================
+    def verificar_login(self):
+        """Verifica se já existe o token de acesso."""
+        if os.path.exists("token.json"):
+            self._set_status("Ocioso", C["green"], "Pronto para iniciar. Tudo configurado.")
+            self.btn_start.configure(state="normal")
+            return True
+        else:
+            self._set_status("Aguardando Login", C["cyan"], "Credenciais ausentes. Autentique no Google Drive e tente novamente.")
+            self.btn_start.configure(state="disabled")
+            return False
+
+    def autenticar_drive(self):
+        if self.auth_em_curso: return
+        self.auth_em_curso = True
+        
+        self.btn_auth.configure(state="disabled", text="CONECTANDO...")
+        self.btn_cancel_auth.pack(side="left", padx=15)
+        self._set_status("Autenticando...", C["cyan"], "Siga as instruções que abrirão no seu navegador.")
+
+        def _thread_auth():
+            try:
+                motor_sardinha.get_drive_service()
+                self.after(0, self._finalizar_auth, True)
+            except Exception as e:
+                print(f"Erro na autenticação: {e}")
+                self.after(0, self._finalizar_auth, False)
+
+        t = threading.Thread(target=_thread_auth, daemon=True)
+        t.start()
+
+    def cancelar_login(self):
+        self.auth_em_curso = False
+        self._finalizar_auth(False)
+        self.log_viewer.append_text("⚠️ Autenticação interrompida pelo usuário.\n")
+
+    def _finalizar_auth(self, sucesso):
+        self.auth_em_curso = False
+        self.btn_auth.configure(state="normal", text="🔑  AUTENTICAR DRIVE")
+        self.btn_cancel_auth.pack_forget()
+        self.verificar_login()
+        if sucesso:
+            self.log_viewer.append_text("✅ Drive autenticado com sucesso!\n")
 
     # ==========================================
     # --- CONTROLE DE EXECUÇÃO ---
