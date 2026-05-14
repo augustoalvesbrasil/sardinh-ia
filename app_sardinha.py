@@ -382,7 +382,7 @@ class SardinhaApp(ctk.CTk):
         # Spacer + versão
         sb.grid_rowconfigure(11, weight=1)
         ctk.CTkLabel(
-            sb, text="SardinhIA  v1.0",
+            sb, text="SardinhIA  v1.1",
             font=ctk.CTkFont(size=10), text_color=C["txt3"]
         ).grid(row=12, column=0, pady=(0, 14))
 
